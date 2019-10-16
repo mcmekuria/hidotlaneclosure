@@ -1,0 +1,271 @@
+
+# coding: utf-8
+
+
+import arcpy, os , shutil, sys
+import xml.dom.minidom as DOM
+import arcgis
+from arcpy import env
+import unicodedata
+import datetime, tzlocal
+from datetime import date , timedelta
+from time import  strftime
+import math
+from os import listdir
+from arcgis.gis import GIS
+from arcgis.geoenrichment import *
+from arcgis.features._data.geodataset.geodataframe import SpatialDataFrame
+from cmath import isnan
+from math import trunc
+#import ago
+
+try:
+    import urllib.request, urllib.error, urllib.parse  # Python 2
+except ImportError:
+    import urllib.request as urllib2  # Python 3
+import zipfile
+from zipfile import ZipFile
+import json
+import fileinput
+from os.path import isdir, isfile, join
+
+#%matplotlib inline
+import matplotlib.pyplot as pyd
+from IPython.display import display #, YouTubeVideo
+from IPython.display import HTML
+import pandas as pd
+#from pandas import DataFrame as pdf
+
+#import geopandas as gpd
+
+from arcgis import geometry
+from arcgis import features 
+import arcgis.network as network
+
+from arcgis.features.analyze_patterns import interpolate_points
+import arcgis.geocoding as geocode
+from arcgis.features.find_locations import trace_downstream
+from arcgis.features.use_proximity import create_buffers
+from arcgis.features import GeoAccessor as gac, GeoSeriesAccessor as gsac
+from arcgis.features import SpatialDataFrame as spedf
+
+from arcgis.features import FeatureLayer
+
+import numpy as np
+
+from copy import deepcopy
+
+def webexsearch(mgis, title, owner_value, item_type_value, max_items_value=1000,inoutside=False):
+    item_match = None
+    search_result = mgis.content.search(query= title + ' AND owner:' + owner_value, 
+                                          item_type=item_type_value, max_items=max_items_value, outside_org=inoutside)
+    if "Imagery Layer" in item_type_value:
+        item_type_value = item_type_value.replace("Imagery Layer", "Image Service")
+    elif "Layer" in item_type_value:
+        item_type_value = item_type_value.replace("Layer", "Service")
+    
+    for item in search_result:
+        if item.title == title:
+            item_match = item
+            break
+    return item_match
+
+def lyrsearch(lyrlist, lyrname):
+    lyr_match = None
+   
+    for lyr in lyrlist:
+        if lyr.properties.name == lyrname:
+            lyr_match = lyr
+            break
+    return lyr_match
+
+def create_section(lyr, hdrow, chdrows,rtefeat):
+    try:
+        object_id = 1
+        pline = geometry.Polyline(rtefeat)
+        feature = features.Feature(
+            geometry=pline[0],
+            attributes={
+                'OBJECTID': object_id,
+                'PARK_NAME': 'My Park',
+                'TRL_NAME': 'Foobar Trail',
+                'ELEV_FT': '5000'
+            }
+        )
+
+        lyr.edit_features(adds=[feature])
+        #_map.draw(point)
+
+    except Exception as e:
+        print("Couldn't create the feature. {}".format(str(e)))
+        
+
+def fldvartxt(fldnm,fldtyp,fldnull,fldPrc,fldScl,fldleng,fldalnm,fldreq):
+    fld = arcpy.Field()
+    fld.name = fldnm
+    fld.type = fldtyp
+    fld.isNullable = fldnull
+    fld.precision = fldPrc
+    fld.scale = fldScl
+    fld.length = fldleng
+    fld.aliasName = fldalnm
+    fld.required = fldreq
+    return fld
+
+def df_colsame(df):
+    """ returns an empty data frame with the same column names and dtypes as df """
+    #df0 = pd.DataFrame.spatial({i[0]: pd.Series(dtype=i[1]) for i in df.dtypes.iteritems()}, columns=df.dtypes.index)
+    return df
+
+def offdirn(closide,dirn1):
+    if closide == 'Right':
+        offdirn1 = 'RIGHT'
+    elif closide == 'Left':
+        offdirn1 = 'LEFT'
+        dirn1 = -1*dirn
+    elif closide == 'Center':
+        offdirn1 = 'RIGHT'
+        dirn1 = 0.5
+    elif closide == 'Both':
+        offdirn1 = 'RIGHT'
+        dirn1 = 0
+    elif closide == 'Directional':
+        if dirn1 == -1:
+            offdirn1 = 'LEFT'
+        else:
+            offdirn1 = 'RIGHT'
+    elif closide == 'Full' or closide == 'All':
+        offdirn1 = 'RIGHT'
+        dirn1 = 0
+    elif closide == 'Shift':
+        offdirn1 = 'RIGHT'
+    elif closide == 'Local':
+        offdirn1 = 'RIGHT'
+    else:
+        offdirn1 = 'RIGHT'
+        dirn1 = 0 
+    return offdirn1,dirn1
+
+def deleteupdates(prjstlyrsrc, sectfeats):
+    for x in prjstlyrsrc:
+        print (" layer: {} ; from item : {} ; URL : {} ; Container : {} ".format(x,x.fromitem,x.url,x.container))
+        if 'Projects' in (prjstlyrsrc):
+            xfeats =  x.query().features
+            if len(xfeats) > 0:
+                if isinstance(xfeats,(list,tuple)):
+                    if "OBJECTID" in xfeats[0].attributes:
+                        oids = "'" + "','".join(str(xfs.attributes['OBJECTID']) for xfs in xfeats if 'OBJECTID' in xfs.attributes ) + "'"
+                        oidqry = " OBJECTID in ({}) ".format(oids)
+                    elif "OID" in xfeats[0].attributes:    
+                        oids = "'" + "','".join(str(xfs.attributes['OID']) for xfs in xfeats if 'OID' in xfs.attributes ) + "'"
+                        oidqry = " OID in ({}) ".format(oids)
+                    print (" from item : {} ; oids : {} ; ".format(x.fromitem,oids))
+                    
+                elif isinstance(xfeats,spedf):
+                    if "OBJECTID" in xfeats.columns:
+                        oids = "'" + "','".join(str(f1.get_value('OBJECTID')) for f1 in xfeats ) + "'"
+                        oidqry = " OBJECTID in ({}) ".format(oids)
+                    elif "OID" in xfeats.columns:    
+                        oids = "'" + "','".join(str(f1.get_value('OID')) for f1 in xfeats ) + "'"
+                        oidqry = " OID in ({}) ".format(oids)
+                    print (" from item : {} ; oids : {} ; ".format(x.fromitem,oids))
+                    
+                if 'None' in oids:
+                    print (" from item : {} ; oids : {} ; ".format(x.fromitem,oids))
+                else:
+                    x.delete_features(where=oidqry)
+
+
+    # get the date and time
+curDate = strftime("%Y%m%d%H%M%S") 
+# convert unixtime to local time zone
+#x1=1547062200000
+#tbeg = datetime.date.today().strftime("%A, %d. %B %Y %I:%M%p")
+tbeg = datetime.date.today().strftime("%A, %B %d, %Y at %H:%M:%S %p")
+#tlocal = datetime.datetime.fromtimestamp(x1/1e3 , tzlocal.get_localzone())
+
+
+### Start setting variables for local operation
+#outdir = r"D:\MyFiles\HWYAP\laneclosure\Sections"
+#lcoutputdir =  r"C:\\users\\mmekuria\\ArcGIS\\LCForApproval"
+#lcfgdboutput = "LaneClosureForApproval.gdb" #  "Lane_Closure_Feature_WebMap.gdb" #
+#lcfgdbscratch =  "LaneClosureScratch.gdb"
+# output file geo db 
+#lcfgdboutpath = "{}\\{}".format(lcoutputdir, lcfgdboutput)
+
+# ArcGIS user credentials to authenticate against the portal
+#credentials = { 'userName' : 'dot_mmekuria', 'passWord' : 'xxxxxxxxx'}
+#credentials = { 'userName' : arcpy.GetParameter(4), 'passWord' : arcpy.GetParameter(5)}
+# Address of your ArcGIS portal
+portal_url = r"http://histategis.maps.arcgis.com/" # r"https://www.arcgis.com/" # 
+
+# ID or Title of the feature service to update
+#featureService_ID = '9243138b20f74429b63f4bd81f59bbc9' # arcpy.GetParameter(0) #  "3fcf2749dc394f7f9ecb053771669fc4" "30614eb4dd6c4d319a05c6f82b049315" # "c507f60f298944dbbfcae3005ad56bc4"
+lnclSrcFSTitle = 'LaneClosure' # arcpy.GetParameter(0) 
+itypelnclsrc="Feature Service" # "Feature Layer" # "Service Definition"
+lnclhdrnm = 'LaneClosure'
+lnclchdnm = 'Location_repeat'
+
+fsectWebMapTitle = 'Lane_Closure_WebMap_WFL1' # arcpy.GetParameter(0) #  'e9a9bcb9fad34f8280321e946e207378'
+itypeFS="Feature Service" # "Feature Layer" # "Service Definition"
+wmlnclyrptsnm = 'Lane_Closure_Begin_and_End_Points'
+wmlnclyrsectsnm = 'Lane_Closure_Sections'
+
+hirtsTitle = 'HIDOTLRS' # arcpy.GetParameter(0) #  'e9a9bcb9fad34f8280321e946e207378'
+itypelrts="Feature Service" # "Feature Layer" # "Service Definition"
+wmlrtsnm = 'HIDOTLRS'
+rteFCSelNm = 'rtesel'
+servicename =  lnclSrcFSTitle # "Lane_Closure_WebMap" # "HI DOT Daily Lane Closures Sample New" # arcpy.GetParameter(1) # 
+tempPath = sys.path[0]
+userName = "dot_mmekuria" # credentials['userName'] # arcpy.GetParameter(2) # 
+#passWord = credentials['passWord'] # arcpy.GetParameter(3) # "ChrisMaz!1"
+arcpy.env.overwriteOutput = True
+#print("Temp path : {}".format(tempPath))
+
+print("Connecting to {}".format(portal_url))
+#qgis = GIS(portal_url, userName, passWord)
+qgis = GIS(profile="hisagolprof")
+numfs = 1000 # number of items to query
+#    sdItem = qgis.content.get(lcwebmapid)
+ekOrg = False
+# search for lane closure source data
+print("Searching for lane closure source {} from {} item for user {} and Service Title {} on AGOL...".format(itypelnclsrc,portal_url,userName,fsectWebMapTitle))
+fsectwebmap = webexsearch(qgis, fsectWebMapTitle, userName, itypeFS,numfs,ekOrg)
+#print (" Content search result : {} ; ".format(fsect))
+
+print (" Feature URL: {} ; Title : {} ; Id : {} ".format(fsectwebmap.url,fsectwebmap.title,fsectwebmap.id))
+wmsectlyrs = fsectwebmap.layers
+wmsectlyrpts = lyrsearch(wmsectlyrs, wmlnclyrptsnm)
+wmlnclyrsects = lyrsearch(wmsectlyrs, wmlnclyrsectsnm)
+tdate = datetime.datetime.today()+timedelta(hours=12)
+sectfldsall = [fd.name for fd in wmlnclyrsects.properties.fields]
+# select sections with where clause string
+fld0 = "CreationDate"
+sectfeatset = wmlnclyrsects.query()
+
+cfeats = sectfeatset.features
+cdate = cfeats[0].attributes[fld0]
+tsdate = datetime.datetime.timestamp(tdate)
+tsdateq = datetime.datetime.fromtimestamp(tsdate)
+qryStr = "{} < '{}' ".format(fld0,tsdateq) #
+norteqrysect = wmlnclyrsects.query(where=qryStr)
+# prepare the object Id's with no route numbers (submitted without update privileges
+fld1 = "OBJECTID"
+if len(norteqrysect)>0:
+    norteidsect = "OBJECTID in ('" + "','".join(str(sfs.attributes[fld1]) for sfs in norteqrysect )  + "')"
+    # edit the selected records 
+    resultdel1 = wmlnclyrsects.delete_features(where=norteidsect)
+
+ptqry = wmsectlyrpts.query()
+#ptsdf = wmsectlyrpts.query(as_df=True)
+ptsfset = ptqry.features
+
+norteqrypt = wmsectlyrpts.query(where=qryStr)
+# prepare the object Id's with no route numbers (submitted without update privileges
+if len(norteqrypt)>0:
+    norteidpt = "OBJECTID in ('" + "','".join(str(sfs.attributes['OBJECTID']) for sfs in norteqrypt )  + "')"
+    # edit the selected records 
+    resultdel2 = wmsectlyrpts.delete_features(where=norteidpt)
+
+
+print (" End lane closure processing sections {} features and point {} features using query {}".format (resultdel1,resultdel2,qryStr))
